@@ -32,8 +32,23 @@ def _request(
     Helper to call the Minyan Finder API with basic error handling.
     """
     url = f"{API_BASE_URL.rstrip('/')}{path}"
+    # Disable SSL verification to handle certificate issues with Render.com
+    # In production, you may want to set this via environment variable
+    verify_ssl = os.getenv("VERIFY_SSL", "false").lower() == "true"
     try:
-        resp = requests.request(method, url, params=params, json=json_body, timeout=15)
+        resp = requests.request(
+            method, 
+            url, 
+            params=params, 
+            json=json_body, 
+            timeout=15,
+            verify=verify_ssl
+        )
+    except requests.exceptions.SSLError as exc:
+        return {
+            "ok": False,
+            "error": f"SSL certificate verification error: {exc}. Try setting VERIFY_SSL=false environment variable.",
+        }
     except requests.RequestException as exc:
         return {
             "ok": False,
