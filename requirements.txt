@@ -1,4 +1,11 @@
+# For Claude Desktop stdio MCP server
 mcp>=1.0.0
+
+# For Render HTTP deployment (FastAPI)
+fastapi==0.115.6
+uvicorn==0.32.0
+
+# Common dependencies
 requests==2.32.3
 
 
