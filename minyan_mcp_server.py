@@ -2,8 +2,9 @@ import os
 from typing import Any, Dict, Optional
 
 import requests
-from fastapi import FastAPI
-from mcp_agent import MCPApp, tool
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 
 API_BASE_URL = os.getenv("MINYAN_FINDER_API_BASE_URL", "https://minyan-finder-api.onrender.com")
@@ -61,10 +62,25 @@ def _validate_radius(radius_km: float) -> None:
 
 
 app = FastAPI(title="Minyan Finder MCP Server")
-mcp_app = MCPApp(app)
 
 
-@mcp_app.tool()
+# MCP Protocol Models
+class Tool(BaseModel):
+    name: str
+    description: str
+    inputSchema: Dict[str, Any]
+
+
+class MCPToolsResponse(BaseModel):
+    tools: list[Tool]
+
+
+class ToolCallRequest(BaseModel):
+    name: str
+    arguments: Dict[str, Any]
+
+
+# Tool implementations
 async def health_check() -> Dict[str, Any]:
     """
     Call GET /health on the Minyan Finder API.
@@ -72,7 +88,6 @@ async def health_check() -> Dict[str, Any]:
     return _request("GET", "/health")
 
 
-@mcp_app.tool()
 async def get_nearby_broadcasts(
     lat: float,
     lon: float,
@@ -92,7 +107,6 @@ async def get_nearby_broadcasts(
     return _request("GET", "/broadcasts/nearby", params=params)
 
 
-@mcp_app.tool()
 async def create_broadcast(
     title: str,
     description: str,
@@ -126,7 +140,6 @@ async def create_broadcast(
     return _request("POST", "/broadcasts", json_body=body)
 
 
-@mcp_app.tool()
 async def update_broadcast(
     broadcast_id: str,
     title: Optional[str] = None,
@@ -165,7 +178,6 @@ async def update_broadcast(
     return _request("PUT", f"/broadcasts/{broadcast_id}", json_body=body)
 
 
-@mcp_app.tool()
 async def delete_broadcast(broadcast_id: str) -> Dict[str, Any]:
     """
     Call DELETE /broadcasts/{id} to delete a broadcast.
@@ -174,6 +186,103 @@ async def delete_broadcast(broadcast_id: str) -> Dict[str, Any]:
         raise ValueError("broadcast_id is required")
 
     return _request("DELETE", f"/broadcasts/{broadcast_id}")
+
+
+# MCP Endpoints
+@app.get("/mcp", response_model=MCPToolsResponse)
+async def list_tools():
+    """List all available MCP tools."""
+    return {
+        "tools": [
+            {
+                "name": "health_check",
+                "description": "Call GET /health on the Minyan Finder API.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            },
+            {
+                "name": "get_nearby_broadcasts",
+                "description": "Call GET /broadcasts/nearby with latitude/longitude and radius_km.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "lat": {"type": "number", "description": "Latitude (-90 to 90)"},
+                        "lon": {"type": "number", "description": "Longitude (-180 to 180)"},
+                        "radius_km": {"type": "number", "description": "Radius in kilometers", "default": 5.0},
+                    },
+                    "required": ["lat", "lon"],
+                },
+            },
+            {
+                "name": "create_broadcast",
+                "description": "Call POST /broadcasts to create a new minyan broadcast.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "description": {"type": "string"},
+                        "lat": {"type": "number"},
+                        "lon": {"type": "number"},
+                        "start_time_iso": {"type": "string", "description": "ISO-8601 string"},
+                        "tz": {"type": "string", "description": "IANA timezone string"},
+                    },
+                    "required": ["title", "description", "lat", "lon", "start_time_iso", "tz"],
+                },
+            },
+            {
+                "name": "update_broadcast",
+                "description": "Call PUT /broadcasts/{id} to update a broadcast. Only provided fields will be updated.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "broadcast_id": {"type": "string"},
+                        "title": {"type": "string"},
+                        "description": {"type": "string"},
+                        "lat": {"type": "number"},
+                        "lon": {"type": "number"},
+                        "start_time_iso": {"type": "string"},
+                        "tz": {"type": "string"},
+                    },
+                    "required": ["broadcast_id"],
+                },
+            },
+            {
+                "name": "delete_broadcast",
+                "description": "Call DELETE /broadcasts/{id} to delete a broadcast.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "broadcast_id": {"type": "string"},
+                    },
+                    "required": ["broadcast_id"],
+                },
+            },
+        ]
+    }
+
+
+@app.post("/mcp/call")
+async def call_tool(request: ToolCallRequest):
+    """Call an MCP tool by name with arguments."""
+    tool_map = {
+        "health_check": health_check,
+        "get_nearby_broadcasts": get_nearby_broadcasts,
+        "create_broadcast": create_broadcast,
+        "update_broadcast": update_broadcast,
+        "delete_broadcast": delete_broadcast,
+    }
+
+    if request.name not in tool_map:
+        raise HTTPException(status_code=404, detail=f"Tool '{request.name}' not found")
+
+    try:
+        result = await tool_map[request.name](**request.arguments)
+        return {"result": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 
