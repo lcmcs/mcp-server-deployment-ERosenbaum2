@@ -1,0 +1,6 @@
+fastapi==0.115.5
+mcp-agent==0.1.0
+uvicorn==0.32.0
+requests==2.32.3
+
+
