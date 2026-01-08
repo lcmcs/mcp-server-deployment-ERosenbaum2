@@ -64,16 +64,22 @@ def _request(
     }
 
 
-def _validate_lat_lon(lat: float, lon: float) -> None:
-    if not (-90.0 <= lat <= 90.0):
-        raise ValueError(f"lat must be between -90 and 90, got {lat}")
-    if not (-180.0 <= lon <= 180.0):
-        raise ValueError(f"lon must be between -180 and 180, got {lon}")
+def _validate_latitude_longitude(latitude: float, longitude: float) -> None:
+    if not (-90.0 <= latitude <= 90.0):
+        raise ValueError(f"latitude must be between -90 and 90, got {latitude}")
+    if not (-180.0 <= longitude <= 180.0):
+        raise ValueError(f"longitude must be between -180 and 180, got {longitude}")
 
 
-def _validate_radius(radius_km: float) -> None:
-    if radius_km <= 0:
-        raise ValueError("radius_km must be > 0")
+def _validate_radius(radius: float) -> None:
+    if radius <= 0:
+        raise ValueError("radius must be > 0")
+
+
+def _validate_minyan_type(minyan_type: str) -> None:
+    valid_types = ["shacharit", "mincha", "maariv"]
+    if minyan_type not in valid_types:
+        raise ValueError(f"minyanType must be one of {valid_types}, got {minyan_type}")
 
 
 app = FastAPI(title="Minyan Finder MCP Server")
@@ -119,103 +125,101 @@ async def health_check() -> Dict[str, Any]:
 
 
 async def get_nearby_broadcasts(
-    lat: float,
-    lon: float,
-    radius_km: float = 5.0,
+    latitude: float,
+    longitude: float,
+    radius: float = 2.0,
+    minyanType: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Call GET /broadcasts/nearby with latitude/longitude and radius_km.
+    Call GET /broadcasts/nearby with latitude/longitude and radius (in miles).
     """
-    _validate_lat_lon(lat, lon)
-    _validate_radius(radius_km)
+    _validate_latitude_longitude(latitude, longitude)
+    _validate_radius(radius)
 
     params = {
-        "lat": lat,
-        "lon": lon,
-        "radius_km": radius_km,
+        "latitude": latitude,
+        "longitude": longitude,
+        "radius": radius,
     }
+    if minyanType:
+        _validate_minyan_type(minyanType)
+        params["minyanType"] = minyanType
+    
     return _request("GET", "/broadcasts/nearby", params=params)
 
 
 async def create_broadcast(
-    title: str,
-    description: str,
-    lat: float,
-    lon: float,
-    start_time_iso: str,
-    tz: str,
+    latitude: float,
+    longitude: float,
+    minyanType: str,
+    earliestTime: str,
+    latestTime: str,
 ) -> Dict[str, Any]:
     """
     Call POST /broadcasts to create a new minyan broadcast.
     """
-    if not title.strip():
-        raise ValueError("title is required")
-    if not description.strip():
-        raise ValueError("description is required")
-    if not start_time_iso.strip():
-        raise ValueError("start_time_iso is required (ISO-8601 string)")
-    if not tz.strip():
-        raise ValueError("tz is required (IANA timezone string)")
-
-    _validate_lat_lon(lat, lon)
+    _validate_latitude_longitude(latitude, longitude)
+    _validate_minyan_type(minyanType)
+    
+    if not earliestTime.strip():
+        raise ValueError("earliestTime is required (ISO 8601 UTC format, e.g., 2025-03-26T13:00:00Z)")
+    if not latestTime.strip():
+        raise ValueError("latestTime is required (ISO 8601 UTC format, e.g., 2025-03-26T14:00:00Z)")
 
     body = {
-        "title": title,
-        "description": description,
-        "lat": lat,
-        "lon": lon,
-        "start_time_iso": start_time_iso,
-        "tz": tz,
+        "latitude": latitude,
+        "longitude": longitude,
+        "minyanType": minyanType,
+        "earliestTime": earliestTime,
+        "latestTime": latestTime,
     }
     return _request("POST", "/broadcasts", json_body=body)
 
 
 async def update_broadcast(
-    broadcast_id: str,
-    title: Optional[str] = None,
-    description: Optional[str] = None,
-    lat: Optional[float] = None,
-    lon: Optional[float] = None,
-    start_time_iso: Optional[str] = None,
-    tz: Optional[str] = None,
+    id: str,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    minyanType: Optional[str] = None,
+    earliestTime: Optional[str] = None,
+    latestTime: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Call PUT /broadcasts/{id} to update a broadcast.
     Only provided fields will be updated.
     """
-    if not broadcast_id.strip():
-        raise ValueError("broadcast_id is required")
+    if not id.strip():
+        raise ValueError("id is required")
 
     body: Dict[str, Any] = {}
-    if title is not None:
-        body["title"] = title
-    if description is not None:
-        body["description"] = description
-    if lat is not None:
-        _validate_lat_lon(lat, lon if lon is not None else 0.0)
-        body["lat"] = lat
-    if lon is not None:
-        _validate_lat_lon(lat if lat is not None else 0.0, lon)
-        body["lon"] = lon
-    if start_time_iso is not None:
-        body["start_time_iso"] = start_time_iso
-    if tz is not None:
-        body["tz"] = tz
+    if latitude is not None:
+        _validate_latitude_longitude(latitude, longitude if longitude is not None else 0.0)
+        body["latitude"] = latitude
+    if longitude is not None:
+        _validate_latitude_longitude(latitude if latitude is not None else 0.0, longitude)
+        body["longitude"] = longitude
+    if minyanType is not None:
+        _validate_minyan_type(minyanType)
+        body["minyanType"] = minyanType
+    if earliestTime is not None:
+        body["earliestTime"] = earliestTime
+    if latestTime is not None:
+        body["latestTime"] = latestTime
 
     if not body:
         raise ValueError("At least one field must be provided to update")
 
-    return _request("PUT", f"/broadcasts/{broadcast_id}", json_body=body)
+    return _request("PUT", f"/broadcasts/{id}", json_body=body)
 
 
-async def delete_broadcast(broadcast_id: str) -> Dict[str, Any]:
+async def delete_broadcast(id: str) -> Dict[str, Any]:
     """
     Call DELETE /broadcasts/{id} to delete a broadcast.
     """
-    if not broadcast_id.strip():
-        raise ValueError("broadcast_id is required")
+    if not id.strip():
+        raise ValueError("id is required")
 
-    return _request("DELETE", f"/broadcasts/{broadcast_id}")
+    return _request("DELETE", f"/broadcasts/{id}")
 
 
 # Helper function to get tools list
@@ -234,15 +238,16 @@ def get_tools_list() -> Dict[str, Any]:
             },
             {
                 "name": "get_nearby_broadcasts",
-                "description": "Call GET /broadcasts/nearby with latitude/longitude and radius_km.",
+                "description": "Call GET /broadcasts/nearby with latitude/longitude and radius (in miles).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "lat": {"type": "number", "description": "Latitude (-90 to 90)"},
-                        "lon": {"type": "number", "description": "Longitude (-180 to 180)"},
-                        "radius_km": {"type": "number", "description": "Radius in kilometers", "default": 5.0},
+                        "latitude": {"type": "number", "description": "Latitude (-90 to 90)"},
+                        "longitude": {"type": "number", "description": "Longitude (-180 to 180)"},
+                        "radius": {"type": "number", "description": "Search radius in miles", "default": 2.0},
+                        "minyanType": {"type": "string", "description": "Filter by minyan type: shacharit, mincha, or maariv", "enum": ["shacharit", "mincha", "maariv"]},
                     },
-                    "required": ["lat", "lon"],
+                    "required": ["latitude", "longitude", "radius"],
                 },
             },
             {
@@ -251,14 +256,13 @@ def get_tools_list() -> Dict[str, Any]:
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "title": {"type": "string"},
-                        "description": {"type": "string"},
-                        "lat": {"type": "number"},
-                        "lon": {"type": "number"},
-                        "start_time_iso": {"type": "string", "description": "ISO-8601 string"},
-                        "tz": {"type": "string", "description": "IANA timezone string"},
+                        "latitude": {"type": "number", "description": "Latitude (-90 to 90)"},
+                        "longitude": {"type": "number", "description": "Longitude (-180 to 180)"},
+                        "minyanType": {"type": "string", "description": "Type of minyan: shacharit, mincha, or maariv", "enum": ["shacharit", "mincha", "maariv"]},
+                        "earliestTime": {"type": "string", "description": "Earliest time for the minyan (ISO 8601 UTC format, e.g., 2025-03-26T13:00:00Z)"},
+                        "latestTime": {"type": "string", "description": "Latest time for the minyan (ISO 8601 UTC format, e.g., 2025-03-26T14:00:00Z)"},
                     },
-                    "required": ["title", "description", "lat", "lon", "start_time_iso", "tz"],
+                    "required": ["latitude", "longitude", "minyanType", "earliestTime", "latestTime"],
                 },
             },
             {
@@ -267,15 +271,14 @@ def get_tools_list() -> Dict[str, Any]:
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "broadcast_id": {"type": "string"},
-                        "title": {"type": "string"},
-                        "description": {"type": "string"},
-                        "lat": {"type": "number"},
-                        "lon": {"type": "number"},
-                        "start_time_iso": {"type": "string"},
-                        "tz": {"type": "string"},
+                        "id": {"type": "string", "description": "Broadcast ID (UUID)"},
+                        "latitude": {"type": "number", "description": "Latitude (-90 to 90)"},
+                        "longitude": {"type": "number", "description": "Longitude (-180 to 180)"},
+                        "minyanType": {"type": "string", "description": "Type of minyan: shacharit, mincha, or maariv", "enum": ["shacharit", "mincha", "maariv"]},
+                        "earliestTime": {"type": "string", "description": "Earliest time for the minyan (ISO 8601 UTC format)"},
+                        "latestTime": {"type": "string", "description": "Latest time for the minyan (ISO 8601 UTC format)"},
                     },
-                    "required": ["broadcast_id"],
+                    "required": ["id"],
                 },
             },
             {
@@ -284,9 +287,9 @@ def get_tools_list() -> Dict[str, Any]:
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "broadcast_id": {"type": "string"},
+                        "id": {"type": "string", "description": "Broadcast ID (UUID)"},
                     },
-                    "required": ["broadcast_id"],
+                    "required": ["id"],
                 },
             },
         ]

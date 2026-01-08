@@ -75,16 +75,22 @@ def _request(
     }
 
 
-def _validate_lat_lon(lat: float, lon: float) -> None:
-    if not (-90.0 <= lat <= 90.0):
-        raise ValueError(f"lat must be between -90 and 90, got {lat}")
-    if not (-180.0 <= lon <= 180.0):
-        raise ValueError(f"lon must be between -180 and 180, got {lon}")
+def _validate_latitude_longitude(latitude: float, longitude: float) -> None:
+    if not (-90.0 <= latitude <= 90.0):
+        raise ValueError(f"latitude must be between -90 and 90, got {latitude}")
+    if not (-180.0 <= longitude <= 180.0):
+        raise ValueError(f"longitude must be between -180 and 180, got {longitude}")
 
 
-def _validate_radius(radius_km: float) -> None:
-    if radius_km <= 0:
-        raise ValueError("radius_km must be > 0")
+def _validate_radius(radius: float) -> None:
+    if radius <= 0:
+        raise ValueError("radius must be > 0")
+
+
+def _validate_minyan_type(minyan_type: str) -> None:
+    valid_types = ["shacharit", "mincha", "maariv"]
+    if minyan_type not in valid_types:
+        raise ValueError(f"minyanType must be one of {valid_types}, got {minyan_type}")
 
 
 @server.list_tools()
@@ -102,15 +108,16 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="get_nearby_broadcasts",
-            description="Call GET /broadcasts/nearby with latitude/longitude and radius_km.",
+            description="Call GET /broadcasts/nearby with latitude/longitude and radius (in miles).",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "lat": {"type": "number", "description": "Latitude (-90 to 90)"},
-                    "lon": {"type": "number", "description": "Longitude (-180 to 180)"},
-                    "radius_km": {"type": "number", "description": "Radius in kilometers", "default": 5.0},
+                    "latitude": {"type": "number", "description": "Latitude (-90 to 90)"},
+                    "longitude": {"type": "number", "description": "Longitude (-180 to 180)"},
+                    "radius": {"type": "number", "description": "Search radius in miles", "default": 2.0},
+                    "minyanType": {"type": "string", "description": "Filter by minyan type: shacharit, mincha, or maariv", "enum": ["shacharit", "mincha", "maariv"]},
                 },
-                "required": ["lat", "lon"],
+                "required": ["latitude", "longitude", "radius"],
             },
         ),
         Tool(
@@ -119,14 +126,13 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string"},
-                    "description": {"type": "string"},
-                    "lat": {"type": "number"},
-                    "lon": {"type": "number"},
-                    "start_time_iso": {"type": "string", "description": "ISO-8601 string"},
-                    "tz": {"type": "string", "description": "IANA timezone string"},
+                    "latitude": {"type": "number", "description": "Latitude (-90 to 90)"},
+                    "longitude": {"type": "number", "description": "Longitude (-180 to 180)"},
+                    "minyanType": {"type": "string", "description": "Type of minyan: shacharit, mincha, or maariv", "enum": ["shacharit", "mincha", "maariv"]},
+                    "earliestTime": {"type": "string", "description": "Earliest time for the minyan (ISO 8601 UTC format, e.g., 2025-03-26T13:00:00Z)"},
+                    "latestTime": {"type": "string", "description": "Latest time for the minyan (ISO 8601 UTC format, e.g., 2025-03-26T14:00:00Z)"},
                 },
-                "required": ["title", "description", "lat", "lon", "start_time_iso", "tz"],
+                "required": ["latitude", "longitude", "minyanType", "earliestTime", "latestTime"],
             },
         ),
         Tool(
@@ -135,15 +141,14 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "broadcast_id": {"type": "string"},
-                    "title": {"type": "string"},
-                    "description": {"type": "string"},
-                    "lat": {"type": "number"},
-                    "lon": {"type": "number"},
-                    "start_time_iso": {"type": "string"},
-                    "tz": {"type": "string"},
+                    "id": {"type": "string", "description": "Broadcast ID (UUID)"},
+                    "latitude": {"type": "number", "description": "Latitude (-90 to 90)"},
+                    "longitude": {"type": "number", "description": "Longitude (-180 to 180)"},
+                    "minyanType": {"type": "string", "description": "Type of minyan: shacharit, mincha, or maariv", "enum": ["shacharit", "mincha", "maariv"]},
+                    "earliestTime": {"type": "string", "description": "Earliest time for the minyan (ISO 8601 UTC format)"},
+                    "latestTime": {"type": "string", "description": "Latest time for the minyan (ISO 8601 UTC format)"},
                 },
-                "required": ["broadcast_id"],
+                "required": ["id"],
             },
         ),
         Tool(
@@ -152,9 +157,9 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "broadcast_id": {"type": "string"},
+                    "id": {"type": "string", "description": "Broadcast ID (UUID)"},
                 },
-                "required": ["broadcast_id"],
+                "required": ["id"],
             },
         ),
     ]
@@ -170,75 +175,74 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     
     elif name == "get_nearby_broadcasts":
-        lat = arguments.get("lat")
-        lon = arguments.get("lon")
-        radius_km = arguments.get("radius_km", 5.0)
+        latitude = arguments.get("latitude")
+        longitude = arguments.get("longitude")
+        radius = arguments.get("radius", 2.0)
+        minyan_type = arguments.get("minyanType")
         
-        _validate_lat_lon(lat, lon)
-        _validate_radius(radius_km)
+        _validate_latitude_longitude(latitude, longitude)
+        _validate_radius(radius)
         
         params = {
-            "lat": lat,
-            "lon": lon,
-            "radius_km": radius_km,
+            "latitude": latitude,
+            "longitude": longitude,
+            "radius": radius,
         }
+        if minyan_type:
+            _validate_minyan_type(minyan_type)
+            params["minyanType"] = minyan_type
+        
         result = _request("GET", "/broadcasts/nearby", params=params)
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     
     elif name == "create_broadcast":
-        title = arguments.get("title", "").strip()
-        description = arguments.get("description", "").strip()
-        lat = arguments.get("lat")
-        lon = arguments.get("lon")
-        start_time_iso = arguments.get("start_time_iso", "").strip()
-        tz = arguments.get("tz", "").strip()
+        latitude = arguments.get("latitude")
+        longitude = arguments.get("longitude")
+        minyan_type = arguments.get("minyanType", "").strip()
+        earliest_time = arguments.get("earliestTime", "").strip()
+        latest_time = arguments.get("latestTime", "").strip()
         
-        if not title:
-            raise ValueError("title is required")
-        if not description:
-            raise ValueError("description is required")
-        if not start_time_iso:
-            raise ValueError("start_time_iso is required (ISO-8601 string)")
-        if not tz:
-            raise ValueError("tz is required (IANA timezone string)")
+        _validate_latitude_longitude(latitude, longitude)
+        _validate_minyan_type(minyan_type)
         
-        _validate_lat_lon(lat, lon)
+        if not earliest_time:
+            raise ValueError("earliestTime is required (ISO 8601 UTC format, e.g., 2025-03-26T13:00:00Z)")
+        if not latest_time:
+            raise ValueError("latestTime is required (ISO 8601 UTC format, e.g., 2025-03-26T14:00:00Z)")
         
         body = {
-            "title": title,
-            "description": description,
-            "lat": lat,
-            "lon": lon,
-            "start_time_iso": start_time_iso,
-            "tz": tz,
+            "latitude": latitude,
+            "longitude": longitude,
+            "minyanType": minyan_type,
+            "earliestTime": earliest_time,
+            "latestTime": latest_time,
         }
         result = _request("POST", "/broadcasts", json_body=body)
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     
     elif name == "update_broadcast":
-        broadcast_id = arguments.get("broadcast_id", "").strip()
+        broadcast_id = arguments.get("id", "").strip()
         if not broadcast_id:
-            raise ValueError("broadcast_id is required")
+            raise ValueError("id is required")
         
         body: Dict[str, Any] = {}
-        if "title" in arguments:
-            body["title"] = arguments["title"]
-        if "description" in arguments:
-            body["description"] = arguments["description"]
-        if "lat" in arguments:
-            lat = arguments["lat"]
-            lon = arguments.get("lon")
-            _validate_lat_lon(lat, lon if lon is not None else 0.0)
-            body["lat"] = lat
-        if "lon" in arguments:
-            lat = arguments.get("lat")
-            lon = arguments["lon"]
-            _validate_lat_lon(lat if lat is not None else 0.0, lon)
-            body["lon"] = lon
-        if "start_time_iso" in arguments:
-            body["start_time_iso"] = arguments["start_time_iso"]
-        if "tz" in arguments:
-            body["tz"] = arguments["tz"]
+        if "latitude" in arguments:
+            latitude = arguments["latitude"]
+            longitude = arguments.get("longitude")
+            _validate_latitude_longitude(latitude, longitude if longitude is not None else 0.0)
+            body["latitude"] = latitude
+        if "longitude" in arguments:
+            latitude = arguments.get("latitude")
+            longitude = arguments["longitude"]
+            _validate_latitude_longitude(latitude if latitude is not None else 0.0, longitude)
+            body["longitude"] = longitude
+        if "minyanType" in arguments:
+            _validate_minyan_type(arguments["minyanType"])
+            body["minyanType"] = arguments["minyanType"]
+        if "earliestTime" in arguments:
+            body["earliestTime"] = arguments["earliestTime"]
+        if "latestTime" in arguments:
+            body["latestTime"] = arguments["latestTime"]
         
         if not body:
             raise ValueError("At least one field must be provided to update")
@@ -247,9 +251,9 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     
     elif name == "delete_broadcast":
-        broadcast_id = arguments.get("broadcast_id", "").strip()
+        broadcast_id = arguments.get("id", "").strip()
         if not broadcast_id:
-            raise ValueError("broadcast_id is required")
+            raise ValueError("id is required")
         
         result = _request("DELETE", f"/broadcasts/{broadcast_id}")
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
