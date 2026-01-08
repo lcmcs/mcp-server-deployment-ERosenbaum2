@@ -2,7 +2,7 @@ import os
 from typing import Any, Dict, Optional
 
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -62,6 +62,21 @@ def _validate_radius(radius_km: float) -> None:
 
 
 app = FastAPI(title="Minyan Finder MCP Server")
+
+
+@app.get("/")
+async def root():
+    """Root endpoint - provides service information."""
+    return {
+        "service": "Minyan Finder MCP Server",
+        "status": "running",
+        "endpoints": {
+            "mcp_tools": "/mcp",
+            "mcp_call": "/mcp/call",
+            "docs": "/docs",
+        },
+        "description": "MCP server for Minyan Finder API",
+    }
 
 
 # MCP Protocol Models
@@ -188,10 +203,9 @@ async def delete_broadcast(broadcast_id: str) -> Dict[str, Any]:
     return _request("DELETE", f"/broadcasts/{broadcast_id}")
 
 
-# MCP Endpoints
-@app.get("/mcp", response_model=MCPToolsResponse)
-async def list_tools():
-    """List all available MCP tools."""
+# Helper function to get tools list
+def get_tools_list() -> Dict[str, Any]:
+    """Get the list of available tools."""
     return {
         "tools": [
             {
@@ -264,9 +278,55 @@ async def list_tools():
     }
 
 
+# MCP Endpoints
+@app.get("/mcp", response_model=MCPToolsResponse)
+async def list_tools_get():
+    """List all available MCP tools (GET request)."""
+    return get_tools_list()
+
+
+@app.post("/mcp")
+async def mcp_endpoint(request: Request):
+    """
+    Main MCP endpoint - handles both listing tools and calling tools.
+    If request contains 'name' and 'arguments', it calls a tool.
+    Otherwise, it returns the list of tools.
+    """
+    try:
+        body = await request.json()
+    except:
+        # If no body or invalid JSON, return tools list
+        return get_tools_list()
+    
+    # If request has 'name' field, it's a tool call
+    if "name" in body:
+        tool_map = {
+            "health_check": health_check,
+            "get_nearby_broadcasts": get_nearby_broadcasts,
+            "create_broadcast": create_broadcast,
+            "update_broadcast": update_broadcast,
+            "delete_broadcast": delete_broadcast,
+        }
+
+        tool_name = body.get("name")
+        tool_arguments = body.get("arguments", {})
+
+        if tool_name not in tool_map:
+            raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found")
+
+        try:
+            result = await tool_map[tool_name](**tool_arguments)
+            return {"result": result}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    # Otherwise, return tools list
+    return get_tools_list()
+
+
 @app.post("/mcp/call")
 async def call_tool(request: ToolCallRequest):
-    """Call an MCP tool by name with arguments."""
+    """Call an MCP tool by name with arguments (alternative endpoint)."""
     tool_map = {
         "health_check": health_check,
         "get_nearby_broadcasts": get_nearby_broadcasts,
